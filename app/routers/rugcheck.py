@@ -235,10 +235,8 @@ def _format_text_response(response: RugcheckResponse) -> str:
 
 @router.get(
     "/rugcheck",
-    response_model=RugcheckResponse,
     responses={
         200: {"description": "Rugcheck analysis complete"},
-        400: {"description": "Invalid contract address or missing parameter"},
         404: {"description": "Token not found"},
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
@@ -259,13 +257,22 @@ async def get_rugcheck_query(
         default="json",
         description="Response format: json or text",
     ),
-) -> Union[RugcheckResponse, PlainTextResponse]:
+):
     # Accept both parameter names for compatibility
     token_address = contract or mint_address
     if not token_address:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing required parameter: contract (Solana token mint address)"
+        # Return 200 OK with helpful info for APIX validation calls
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ready",
+                "message": "Rugcheck API - provide 'contract' parameter with a Solana token mint address",
+                "example": "/rugcheck?contract=DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+                "parameters": {
+                    "contract": "Solana token mint address (required)",
+                    "format": "json or text (optional, default: json)"
+                }
+            }
         )
     return await _generate_rugcheck(token_address, format)
 
