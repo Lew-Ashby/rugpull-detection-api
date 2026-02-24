@@ -381,6 +381,21 @@ async def get_rugcheck_path(
     return await _generate_rugcheck(contract, format)
 
 
+def parse_apix_query_field(query_string: str) -> dict:
+    """
+    Parse APIX query field format: "mint_address=VALUE" or "key1=val1&key2=val2"
+    Returns dict of parsed parameters.
+    """
+    from urllib.parse import parse_qs
+    result = {}
+    if not query_string:
+        return result
+    parsed = parse_qs(query_string)
+    for key, values in parsed.items():
+        result[key] = values[0] if values else None
+    return result
+
+
 @router.post(
     "/rugcheck-analysis",
     responses={
@@ -414,11 +429,20 @@ async def post_rugcheck_analysis(
             body_json = json.loads(body_bytes)
             logger.info(f"POST DEBUG - Parsed body: {body_json}")
             if isinstance(body_json, dict):
+                # Method 1: Direct field access (standard JSON body)
                 token_address = body_json.get("mint_address") or body_json.get("contract")
+
+                # Method 2: APIX sends {"query": "mint_address=VALUE"} format
+                if not token_address and "query" in body_json:
+                    query_string = body_json.get("query", "")
+                    logger.info(f"POST DEBUG - Parsing APIX query field: {query_string}")
+                    parsed_query = parse_apix_query_field(query_string)
+                    logger.info(f"POST DEBUG - Parsed query params: {parsed_query}")
+                    token_address = parsed_query.get("mint_address") or parsed_query.get("contract")
     except Exception as e:
         logger.warning(f"POST DEBUG - Body parse error: {e}")
 
-    # Also check query params as fallback
+    # Also check URL query params as fallback
     if not token_address:
         token_address = request.query_params.get("mint_address") or request.query_params.get("contract")
 
