@@ -325,6 +325,28 @@ async def post_rugcheck_analysis(
 
 
 @router.get(
+    "/rugcheck-analysis/{contract}",
+    response_model=RugcheckResponse,
+    responses={
+        200: {"description": "Rugcheck analysis complete"},
+        400: {"description": "Invalid contract address"},
+        404: {"description": "Token not found"},
+        429: {"description": "Rate limit exceeded"},
+        500: {"description": "Internal server error"},
+    },
+    summary="Analyze token for rugpull risk (APIX PATH)",
+    description="PATH parameter endpoint - contract address is part of URL",
+)
+@limiter.limit("60/minute")
+async def get_rugcheck_analysis_path(
+    request: Request,
+    contract: str,
+) -> RugcheckResponse:
+    """APIX-compatible PATH parameter endpoint for rugcheck analysis"""
+    return await _generate_rugcheck(contract, "json")
+
+
+@router.get(
     "/rugcheck-analysis",
     responses={
         200: {"description": "Rugcheck analysis complete"},
