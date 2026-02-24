@@ -241,6 +241,7 @@ def _format_text_response(response: RugcheckResponse) -> str:
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
     },
+    include_in_schema=False,  # Hide from OpenAPI so APIX doesn't pick this
 )
 @limiter.limit("60/minute")
 async def get_rugcheck_query(
@@ -288,6 +289,7 @@ async def get_rugcheck_query(
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
     },
+    include_in_schema=False,  # Hide from OpenAPI so APIX doesn't pick this
 )
 @limiter.limit("60/minute")
 async def get_rugcheck_path(
@@ -314,6 +316,7 @@ async def get_rugcheck_path(
     },
     summary="Analyze token for rugpull risk (APIX POST)",
     description="POST endpoint for APIX x402 marketplace tool calls",
+    include_in_schema=False,  # Hide POST - APIX uses GET
 )
 @limiter.limit("60/minute")
 async def post_rugcheck_analysis(
