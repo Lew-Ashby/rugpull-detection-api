@@ -238,9 +238,8 @@ def _format_text_response(response: RugcheckResponse) -> str:
     response_model=RugcheckResponse,
     responses={
         200: {"description": "Rugcheck analysis complete"},
-        400: {"description": "Invalid contract address"},
+        400: {"description": "Invalid contract address or missing parameter"},
         404: {"description": "Token not found"},
-        422: {"description": "Invalid parameters"},
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
     },
@@ -249,14 +248,26 @@ def _format_text_response(response: RugcheckResponse) -> str:
 async def get_rugcheck_query(
     request: Request,
     contract: str = Query(
+        None,
         description="Solana token mint address (base58 format)",
+    ),
+    mint_address: str = Query(
+        None,
+        description="Alias for contract parameter",
     ),
     format: Literal["json", "text"] = Query(
         default="json",
         description="Response format: json or text",
     ),
 ) -> Union[RugcheckResponse, PlainTextResponse]:
-    return await _generate_rugcheck(contract, format)
+    # Accept both parameter names for compatibility
+    token_address = contract or mint_address
+    if not token_address:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required parameter: contract (Solana token mint address)"
+        )
+    return await _generate_rugcheck(token_address, format)
 
 
 @router.get(

@@ -58,8 +58,11 @@ async def security_middleware(request: Request, call_next):
         )
 
     client_host = request.client.host if request.client else "unknown"
-    logger.info(f"{request.method} {request.url.path} from {client_host}")
+    # Log full URL for debugging APIX issues
+    logger.info(f"{request.method} {request.url.path} from {client_host} | Query: {request.url.query}")
     response = await call_next(request)
+    # Log response status for debugging
+    logger.info(f"Response: {response.status_code} for {request.url.path}")
     return response
 
 
