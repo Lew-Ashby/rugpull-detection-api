@@ -323,8 +323,13 @@ async def post_rugcheck_analysis(
 @limiter.limit("60/minute")
 async def get_rugcheck_analysis(
     request: Request,
-    contract: str = Query(..., description="Solana token mint address (base58 format)"),
+    contract: str = Query(None, description="Solana token mint address (base58 format)"),
+    mint_address: str = Query(None, description="Alias for contract parameter"),
     format: Literal["json", "text"] = Query(default="json", description="Response format"),
 ) -> Union[RugcheckResponse, PlainTextResponse]:
     """APIX-compatible GET endpoint for rugcheck analysis"""
-    return await _generate_rugcheck(contract, format)
+    # Accept both 'contract' and 'mint_address' parameters
+    token_address = contract or mint_address
+    if not token_address:
+        raise HTTPException(status_code=422, detail="Missing required parameter: contract or mint_address")
+    return await _generate_rugcheck(token_address, format)
