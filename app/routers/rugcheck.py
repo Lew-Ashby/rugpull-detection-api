@@ -43,10 +43,10 @@ def validate_solana_address(address: str) -> bool:
         return False
 
 
-def extract_token_from_jwt(request: Request) -> str | None:
+def check_apix_configuration(request: Request) -> dict | None:
     """
-    Extract tokenAddress from APIX x-iao-auth JWT header.
-    APIX passes the token address in the JWT payload, NOT as a query parameter.
+    Check APIX JWT to diagnose configuration issues.
+    Returns diagnostic info if x-iao-auth header is present.
     """
     import base64
     import json
@@ -56,12 +56,10 @@ def extract_token_from_jwt(request: Request) -> str | None:
         return None
 
     try:
-        # JWT format: header.payload.signature
         parts = auth_header.split(".")
         if len(parts) != 3:
             return None
 
-        # Decode payload (middle part) - add padding if needed
         payload_b64 = parts[1]
         padding = 4 - len(payload_b64) % 4
         if padding != 4:
@@ -70,14 +68,19 @@ def extract_token_from_jwt(request: Request) -> str | None:
         payload_bytes = base64.urlsafe_b64decode(payload_b64)
         payload = json.loads(payload_bytes)
 
-        token_address = payload.get("tokenAddress")
-        if token_address and validate_solana_address(token_address):
-            logger.info(f"Extracted tokenAddress from JWT: {token_address}")
-            return token_address
+        # Log the APIX configuration for debugging
+        aud = payload.get("aud", "")
+        token_addr = payload.get("tokenAddress", "")
+        logger.warning(f"APIX CONFIG ISSUE - aud (endpoint): {aud}")
+        logger.warning(f"APIX CONFIG ISSUE - tokenAddress in JWT: {token_addr} (this is payment token, NOT analysis target)")
 
-        return None
+        return {
+            "endpoint_registered": aud,
+            "jwt_token_address": token_addr,
+            "issue": "APIX is not passing the 'contract' query parameter"
+        }
     except Exception as e:
-        logger.warning(f"Failed to extract token from JWT: {e}")
+        logger.warning(f"Failed to check APIX config: {e}")
         return None
 
 
@@ -321,14 +324,23 @@ async def get_rugcheck_query(
     # Accept both parameter names for compatibility
     token_address = contract or mint_address
 
-    # CRITICAL: Extract from APIX JWT header if not in query params
     if not token_address:
-        token_address = extract_token_from_jwt(request)
-        if token_address:
-            logger.info(f"Using tokenAddress from JWT: {token_address}")
+        # Check if this is an APIX request with misconfiguration
+        apix_diag = check_apix_configuration(request)
+        if apix_diag:
+            # APIX is calling but not passing contract parameter - configuration issue
+            logger.error(f"APIX MISCONFIGURATION: {apix_diag}")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "error": "APIX_CONFIGURATION_ERROR",
+                    "message": "The APIX tool is not passing the 'contract' parameter. The tool registration needs to be updated to include the contract parameter in the API call.",
+                    "diagnosis": apix_diag,
+                    "solution": "Re-register the APIX tool with endpoint '/api/rugpull-detection-api/rugcheck-analysis' and ensure 'contract' is configured as a required query parameter extracted from user input."
+                }
+            )
 
-    if not token_address:
-        # Return 200 OK with helpful info for APIX validation calls
+        # Regular request without token - return ready status
         return JSONResponse(
             status_code=200,
             content={
@@ -460,14 +472,22 @@ async def get_rugcheck_analysis(
     # Accept both 'contract' and 'mint_address' parameters
     token_address = contract or mint_address
 
-    # CRITICAL: Extract from APIX JWT header if not in query params
     if not token_address:
-        token_address = extract_token_from_jwt(request)
-        if token_address:
-            logger.info(f"APIX: Using tokenAddress from JWT: {token_address}")
+        # Check if this is an APIX request with misconfiguration
+        apix_diag = check_apix_configuration(request)
+        if apix_diag:
+            logger.error(f"APIX MISCONFIGURATION: {apix_diag}")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "error": "APIX_CONFIGURATION_ERROR",
+                    "message": "The APIX tool is not passing the 'contract' parameter. The tool registration needs to be updated.",
+                    "diagnosis": apix_diag,
+                    "solution": "Re-register the APIX tool and ensure 'contract' is configured as a required query parameter extracted from user input."
+                }
+            )
 
-    if not token_address:
-        # Return helpful JSON with 200 status for APIX validation calls
+        # Regular request without token
         return JSONResponse(
             status_code=200,
             content={
