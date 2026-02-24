@@ -259,6 +259,27 @@ async def get_rugcheck_query(
         description="Response format: json or text",
     ),
 ):
+    # DEBUG: Log everything APIX sends
+    logger.info(f"RUGCHECK DEBUG - Full URL: {request.url}")
+    logger.info(f"RUGCHECK DEBUG - Headers: {dict(request.headers)}")
+    logger.info(f"RUGCHECK DEBUG - Query params: {dict(request.query_params)}")
+
+    # Try to extract contract from request body (some systems send body with GET)
+    try:
+        body_bytes = await request.body()
+        if body_bytes:
+            logger.info(f"RUGCHECK DEBUG - Body: {body_bytes.decode()}")
+            import json
+            try:
+                body_json = json.loads(body_bytes)
+                if isinstance(body_json, dict):
+                    if not contract:
+                        contract = body_json.get("contract") or body_json.get("mint_address")
+            except json.JSONDecodeError:
+                pass
+    except Exception as e:
+        logger.warning(f"Could not read body: {e}")
+
     # Accept both parameter names for compatibility
     token_address = contract or mint_address
     if not token_address:
