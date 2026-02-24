@@ -5,7 +5,7 @@ from typing import Literal, Union
 import base58
 from cachetools import TTLCache
 from fastapi import APIRouter, HTTPException, Query, Request, Body
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -319,12 +319,10 @@ async def post_rugcheck_analysis(
 
 @router.get(
     "/rugcheck-analysis",
-    response_model=RugcheckResponse,
     responses={
         200: {"description": "Rugcheck analysis complete"},
         400: {"description": "Invalid contract address"},
         404: {"description": "Token not found"},
-        422: {"description": "Invalid parameters"},
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
     },
@@ -337,10 +335,22 @@ async def get_rugcheck_analysis(
     contract: str = Query(None, description="Solana token mint address (base58 format)"),
     mint_address: str = Query(None, description="Alias for contract parameter"),
     format: Literal["json", "text"] = Query(default="json", description="Response format"),
-) -> Union[RugcheckResponse, PlainTextResponse]:
+):
     """APIX-compatible GET endpoint for rugcheck analysis"""
     # Accept both 'contract' and 'mint_address' parameters
     token_address = contract or mint_address
     if not token_address:
-        raise HTTPException(status_code=422, detail="Missing required parameter: contract or mint_address")
+        # Return helpful JSON with 200 status for APIX validation calls
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ready",
+                "message": "Rugcheck Analysis API - provide 'contract' parameter with a Solana token mint address",
+                "example": "/rugcheck-analysis?contract=DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+                "parameters": {
+                    "contract": "Solana token mint address (required)",
+                    "format": "json or text (optional, default: json)"
+                }
+            }
+        )
     return await _generate_rugcheck(token_address, format)
