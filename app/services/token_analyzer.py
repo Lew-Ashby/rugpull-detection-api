@@ -1,8 +1,9 @@
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import base58
@@ -83,46 +84,73 @@ class TokenAnalyzerService:
         self.jupiter_price_api = "https://price.jup.ag/v6/price"
         self.birdeye_base = "https://public-api.birdeye.so"
 
-    async def analyze_token(self, mint_address: str) -> Optional[TokenAnalysis]:
+    async def analyze_token(self, mint_address: str, timeout: float = 8.0) -> Optional[TokenAnalysis]:
+        """Analyze token with PARALLEL API calls for faster response.
+
+        Args:
+            mint_address: Solana token mint address
+            timeout: Maximum time for analysis (default 8 seconds for APIX compatibility)
+        """
+        try:
+            return await asyncio.wait_for(
+                self._analyze_token_impl(mint_address),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Token analysis timed out for {mint_address}")
+            # Return partial data with mint info only
+            mint_info = await solana_rpc.get_mint_info(mint_address)
+            if mint_info:
+                return TokenAnalysis(
+                    mint_info=mint_info,
+                    metadata=None,
+                    largest_holders=[],
+                    market_data=None,
+                    liquidity_data=None,
+                    token_age_days=None,
+                    creator_address=None,
+                )
+            return None
+
+    async def _analyze_token_impl(self, mint_address: str) -> Optional[TokenAnalysis]:
+        """Internal implementation of token analysis."""
+        # First get mint info (required)
         mint_info = await solana_rpc.get_mint_info(mint_address)
         if not mint_info:
             return None
 
-        metadata = None
-        try:
-            metadata = await solana_rpc.get_token_metadata(mint_address)
-        except Exception as e:
-            logger.warning(f"Failed to get metadata for {mint_address}: {e}")
+        # Run all other calls in PARALLEL for speed
+        async def safe_call(coro, default=None, name=""):
+            try:
+                return await coro
+            except Exception as e:
+                logger.warning(f"Failed {name} for {mint_address}: {e}")
+                return default
 
-        largest_holders = []
-        try:
-            largest_holders = await solana_rpc.get_token_largest_accounts(mint_address, limit=20)
-        except Exception as e:
-            logger.warning(f"Failed to get largest holders for {mint_address}: {e}")
+        # Parallel execution of all independent calls
+        results = await asyncio.gather(
+            safe_call(solana_rpc.get_token_metadata(mint_address), None, "metadata"),
+            safe_call(solana_rpc.get_token_largest_accounts(mint_address, limit=20), [], "holders"),
+            safe_call(self._fetch_dexscreener_data(mint_address), None, "dexscreener"),
+            safe_call(self._get_token_age(mint_address), None, "token_age"),
+            safe_call(solana_rpc.get_signatures_for_address(mint_address, limit=10), [], "signatures"),
+            return_exceptions=True
+        )
 
-        market_data = None
-        try:
-            market_data = await self._fetch_market_data(mint_address)
-        except Exception as e:
-            logger.warning(f"Failed to get market data for {mint_address}: {e}")
+        metadata = results[0] if not isinstance(results[0], Exception) else None
+        largest_holders = results[1] if not isinstance(results[1], Exception) else []
+        dex_data = results[2] if not isinstance(results[2], Exception) else None
+        token_age_days = results[3] if not isinstance(results[3], Exception) else None
+        signatures = results[4] if not isinstance(results[4], Exception) else []
 
-        liquidity_data = None
-        try:
-            liquidity_data = await self._fetch_liquidity_data(mint_address)
-        except Exception as e:
-            logger.warning(f"Failed to get liquidity data for {mint_address}: {e}")
+        # Extract market and liquidity data from single DexScreener call
+        market_data, liquidity_data = self._parse_dexscreener_data(dex_data)
 
-        token_age_days = None
-        try:
-            token_age_days = await self._get_token_age(mint_address)
-        except Exception as e:
-            logger.warning(f"Failed to get token age for {mint_address}: {e}")
-
+        # Identify creator from signatures
         creator_address = None
-        try:
-            creator_address = await self._identify_creator(mint_address, largest_holders)
-        except Exception as e:
-            logger.warning(f"Failed to identify creator for {mint_address}: {e}")
+        if signatures:
+            oldest_sig = signatures[-1]
+            creator_address = oldest_sig.get("memo") or None
 
         return TokenAnalysis(
             mint_info=mint_info,
@@ -133,6 +161,78 @@ class TokenAnalyzerService:
             token_age_days=token_age_days,
             creator_address=creator_address,
         )
+
+    async def _fetch_dexscreener_data(self, mint_address: str) -> Optional[Dict]:
+        """Single DexScreener API call (previously called twice)."""
+        safe_address = validate_mint_address_for_url(mint_address)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{self.dexscreener_base}/tokens/{safe_address}"
+            )
+            if response.status_code != 200:
+                return None
+            return response.json()
+
+    def _parse_dexscreener_data(self, data: Optional[Dict]) -> Tuple[Optional[MarketData], Optional[LiquidityData]]:
+        """Parse DexScreener response into market and liquidity data."""
+        if not data:
+            return None, LiquidityData(
+                has_liquidity=False,
+                total_liquidity_usd=None,
+                lp_burned=False,
+                lp_locked=False,
+                lp_lock_duration_days=None,
+                main_pool=None,
+            )
+
+        pairs = data.get("pairs", [])
+        if not pairs:
+            return None, LiquidityData(
+                has_liquidity=False,
+                total_liquidity_usd=None,
+                lp_burned=False,
+                lp_locked=False,
+                lp_lock_duration_days=None,
+                main_pool=None,
+            )
+
+        main_pair = pairs[0]
+
+        # Market data
+        market_data = MarketData(
+            price_usd=float(main_pair.get("priceUsd", 0)) if main_pair.get("priceUsd") else None,
+            market_cap_usd=float(main_pair.get("marketCap", 0)) if main_pair.get("marketCap") else None,
+            volume_24h_usd=float(main_pair.get("volume", {}).get("h24", 0)),
+            price_change_24h_pct=float(main_pair.get("priceChange", {}).get("h24", 0)),
+            liquidity_usd=float(main_pair.get("liquidity", {}).get("usd", 0)),
+        )
+
+        # Liquidity data
+        total_liquidity = sum(float(p.get("liquidity", {}).get("usd", 0)) for p in pairs)
+        main_pool = main_pair.get("pairAddress")
+
+        lp_info = main_pair.get("info", {})
+        lp_burned = False
+        lp_locked = False
+
+        if "socials" in lp_info:
+            for social in lp_info.get("socials", []):
+                label = social.get("label", "").lower()
+                if "burn" in label:
+                    lp_burned = True
+                if "lock" in label:
+                    lp_locked = True
+
+        liquidity_data = LiquidityData(
+            has_liquidity=total_liquidity > 0,
+            total_liquidity_usd=total_liquidity if total_liquidity > 0 else None,
+            lp_burned=lp_burned,
+            lp_locked=lp_locked,
+            lp_lock_duration_days=None,
+            main_pool=main_pool,
+        )
+
+        return market_data, liquidity_data
 
     async def _fetch_market_data(self, mint_address: str) -> Optional[MarketData]:
         safe_address = validate_mint_address_for_url(mint_address)
