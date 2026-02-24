@@ -294,7 +294,7 @@ async def get_rugcheck_path(
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
     },
-    summary="Analyze token for rugpull risk (APIX compatible)",
+    summary="Analyze token for rugpull risk (APIX POST)",
     description="POST endpoint for APIX x402 marketplace tool calls",
 )
 @limiter.limit("60/minute")
@@ -304,3 +304,26 @@ async def post_rugcheck_analysis(
 ) -> RugcheckResponse:
     """APIX-compatible POST endpoint for rugcheck analysis"""
     return await _generate_rugcheck(body.mint_address, "json")
+
+
+@router.get(
+    "/rugcheck-analysis",
+    response_model=RugcheckResponse,
+    responses={
+        200: {"description": "Rugcheck analysis complete"},
+        400: {"description": "Invalid contract address"},
+        404: {"description": "Token not found"},
+        422: {"description": "Invalid parameters"},
+        429: {"description": "Rate limit exceeded"},
+        500: {"description": "Internal server error"},
+    },
+    summary="Analyze token for rugpull risk (APIX GET)",
+    description="GET endpoint for APIX x402 marketplace tool calls",
+)
+@limiter.limit("60/minute")
+async def get_rugcheck_analysis(
+    request: Request,
+    mint_address: str = Query(..., description="Solana token mint address to analyze"),
+) -> RugcheckResponse:
+    """APIX-compatible GET endpoint for rugcheck analysis"""
+    return await _generate_rugcheck(mint_address, "json")
