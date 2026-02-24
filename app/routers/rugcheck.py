@@ -366,6 +366,28 @@ async def get_rugcheck_analysis(
     format: Literal["json", "text"] = Query(default="json", description="Response format"),
 ):
     """APIX-compatible GET endpoint for rugcheck analysis"""
+    # Log EVERYTHING for debugging
+    logger.info(f"APIX DEBUG - Headers: {dict(request.headers)}")
+    logger.info(f"APIX DEBUG - Query params: {dict(request.query_params)}")
+    logger.info(f"APIX DEBUG - Path params: {request.path_params}")
+
+    # Try to get body even for GET request (some systems do this)
+    try:
+        body_bytes = await request.body()
+        if body_bytes:
+            logger.info(f"APIX DEBUG - Body: {body_bytes.decode()}")
+            import json
+            try:
+                body_json = json.loads(body_bytes)
+                if isinstance(body_json, dict):
+                    # Try to extract contract from body
+                    if not contract:
+                        contract = body_json.get("contract") or body_json.get("mint_address")
+            except json.JSONDecodeError:
+                pass
+    except Exception as e:
+        logger.warning(f"Could not read body: {e}")
+
     # Accept both 'contract' and 'mint_address' parameters
     token_address = contract or mint_address
     if not token_address:
