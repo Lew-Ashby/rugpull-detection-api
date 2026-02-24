@@ -19,7 +19,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
-    openapi_url="/openapi.json" if settings.debug else None,
+    openapi_url="/openapi.json",  # APIX needs this to work - always enabled
 )
 
 app.state.limiter = limiter
