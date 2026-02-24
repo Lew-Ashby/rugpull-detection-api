@@ -383,26 +383,63 @@ async def get_rugcheck_path(
 
 @router.post(
     "/rugcheck-analysis",
-    response_model=RugcheckResponse,
     responses={
         200: {"description": "Rugcheck analysis complete"},
         400: {"description": "Invalid contract address"},
         404: {"description": "Token not found"},
-        422: {"description": "Invalid parameters"},
         429: {"description": "Rate limit exceeded"},
         500: {"description": "Internal server error"},
     },
     summary="Analyze token for rugpull risk (APIX POST)",
-    description="POST endpoint for APIX x402 marketplace tool calls",
-    include_in_schema=False,  # Hide POST - APIX uses GET
+    description="POST endpoint for APIX x402 marketplace tool calls. Send mint_address in JSON body.",
 )
 @limiter.limit("60/minute")
 async def post_rugcheck_analysis(
     request: Request,
-    body: RugcheckRequest,
-) -> RugcheckResponse:
+):
     """APIX-compatible POST endpoint for rugcheck analysis"""
-    return await _generate_rugcheck(body.mint_address, "json")
+    import json
+
+    # Log everything APIX sends for debugging
+    logger.info(f"POST DEBUG - Headers: {dict(request.headers)}")
+    logger.info(f"POST DEBUG - Query params: {dict(request.query_params)}")
+
+    token_address = None
+
+    # Try to get mint_address from body
+    try:
+        body_bytes = await request.body()
+        logger.info(f"POST DEBUG - Raw body: {body_bytes}")
+        if body_bytes:
+            body_json = json.loads(body_bytes)
+            logger.info(f"POST DEBUG - Parsed body: {body_json}")
+            if isinstance(body_json, dict):
+                token_address = body_json.get("mint_address") or body_json.get("contract")
+    except Exception as e:
+        logger.warning(f"POST DEBUG - Body parse error: {e}")
+
+    # Also check query params as fallback
+    if not token_address:
+        token_address = request.query_params.get("mint_address") or request.query_params.get("contract")
+
+    if not token_address:
+        # Check APIX JWT for diagnosis
+        apix_diag = check_apix_configuration(request)
+        if apix_diag:
+            logger.error(f"APIX POST MISCONFIGURATION: {apix_diag}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ready",
+                "message": "POST /rugcheck-analysis - send JSON body with mint_address field",
+                "example": {"mint_address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"},
+                "apix_diagnosis": apix_diag
+            }
+        )
+
+    logger.info(f"POST - Analyzing token: {token_address}")
+    return await _generate_rugcheck(token_address, "json")
 
 
 @router.get(
