@@ -323,7 +323,8 @@ async def post_rugcheck_analysis(
 @limiter.limit("60/minute")
 async def get_rugcheck_analysis(
     request: Request,
-    mint_address: str = Query(..., description="Solana token mint address to analyze"),
-) -> RugcheckResponse:
+    contract: str = Query(..., description="Solana token mint address (base58 format)"),
+    format: Literal["json", "text"] = Query(default="json", description="Response format"),
+) -> Union[RugcheckResponse, PlainTextResponse]:
     """APIX-compatible GET endpoint for rugcheck analysis"""
-    return await _generate_rugcheck(mint_address, "json")
+    return await _generate_rugcheck(contract, format)
