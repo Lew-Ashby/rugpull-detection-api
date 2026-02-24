@@ -74,6 +74,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 app.include_router(health.router, tags=["Health"])
 app.include_router(rugcheck.router, prefix="/api/v1", tags=["Rugcheck"])
+# Also mount at root for APIX compatibility (calls /rugcheck-analysis directly)
+app.include_router(rugcheck.router, tags=["Rugcheck-APIX"])
 
 
 @app.get("/", include_in_schema=False)
