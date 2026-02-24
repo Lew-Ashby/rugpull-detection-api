@@ -82,6 +82,8 @@ app.include_router(rugcheck.router, tags=["Rugcheck-Root"])
 # Mount at APIX expected path: /api/{server-slug}/
 # V2 endpoint for new APIX registration (can't delete old one)
 app.include_router(rugcheck.router, prefix="/api/rugpull-detection-api-v2", tags=["Rugcheck-APIX-V2"])
+# V3 endpoint - POST method for APIX compatibility
+app.include_router(rugcheck.router, prefix="/api/rugpull-detection-api-v3", tags=["Rugcheck-APIX-V3"])
 
 
 @app.get("/", include_in_schema=False)
