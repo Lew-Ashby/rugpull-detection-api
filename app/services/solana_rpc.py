@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -51,7 +52,7 @@ class SolanaRPCService:
         return self.rpc_url
 
     async def _rpc_call(self, method: str, params: List[Any]) -> Dict[str, Any]:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 self._get_rpc_url(),
                 json={
@@ -184,28 +185,28 @@ class SolanaRPCService:
             if not result or not result.get("value"):
                 return []
 
-            accounts = []
-            for account in result["value"][:limit]:
+            raw_accounts = result["value"][:limit]
+
+            # PARALLEL owner lookups instead of sequential
+            async def get_owner_safe(address: str) -> Optional[str]:
                 try:
-                    owner = await self._get_token_account_owner(account["address"])
-                    accounts.append(
-                        TokenAccount(
-                            address=account["address"],
-                            owner=owner or account["address"],
-                            mint=mint_address,
-                            amount=int(account.get("amount", "0")),
-                        )
+                    return await self._get_token_account_owner(address)
+                except Exception:
+                    return None
+
+            owner_tasks = [get_owner_safe(acc["address"]) for acc in raw_accounts]
+            owners = await asyncio.gather(*owner_tasks)
+
+            accounts = []
+            for account, owner in zip(raw_accounts, owners):
+                accounts.append(
+                    TokenAccount(
+                        address=account["address"],
+                        owner=owner or account["address"],
+                        mint=mint_address,
+                        amount=int(account.get("amount", "0")),
                     )
-                except Exception as e:
-                    logger.warning(f"Failed to get owner for account {account['address']}: {e}")
-                    accounts.append(
-                        TokenAccount(
-                            address=account["address"],
-                            owner=account["address"],
-                            mint=mint_address,
-                            amount=int(account.get("amount", "0")),
-                        )
-                    )
+                )
             return accounts
         except Exception as e:
             logger.warning(f"Failed to get largest accounts for {mint_address}: {e}")
