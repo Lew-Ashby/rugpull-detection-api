@@ -43,6 +43,44 @@ def validate_solana_address(address: str) -> bool:
         return False
 
 
+def extract_token_from_jwt(request: Request) -> str | None:
+    """
+    Extract tokenAddress from APIX x-iao-auth JWT header.
+    APIX passes the token address in the JWT payload, NOT as a query parameter.
+    """
+    import base64
+    import json
+
+    auth_header = request.headers.get("x-iao-auth")
+    if not auth_header:
+        return None
+
+    try:
+        # JWT format: header.payload.signature
+        parts = auth_header.split(".")
+        if len(parts) != 3:
+            return None
+
+        # Decode payload (middle part) - add padding if needed
+        payload_b64 = parts[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        payload = json.loads(payload_bytes)
+
+        token_address = payload.get("tokenAddress")
+        if token_address and validate_solana_address(token_address):
+            logger.info(f"Extracted tokenAddress from JWT: {token_address}")
+            return token_address
+
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to extract token from JWT: {e}")
+        return None
+
+
 async def _generate_rugcheck(
     contract: str,
     format: str,
@@ -282,6 +320,13 @@ async def get_rugcheck_query(
 
     # Accept both parameter names for compatibility
     token_address = contract or mint_address
+
+    # CRITICAL: Extract from APIX JWT header if not in query params
+    if not token_address:
+        token_address = extract_token_from_jwt(request)
+        if token_address:
+            logger.info(f"Using tokenAddress from JWT: {token_address}")
+
     if not token_address:
         # Return 200 OK with helpful info for APIX validation calls
         return JSONResponse(
@@ -414,6 +459,13 @@ async def get_rugcheck_analysis(
 
     # Accept both 'contract' and 'mint_address' parameters
     token_address = contract or mint_address
+
+    # CRITICAL: Extract from APIX JWT header if not in query params
+    if not token_address:
+        token_address = extract_token_from_jwt(request)
+        if token_address:
+            logger.info(f"APIX: Using tokenAddress from JWT: {token_address}")
+
     if not token_address:
         # Return helpful JSON with 200 status for APIX validation calls
         return JSONResponse(
