@@ -4,8 +4,9 @@ from typing import Literal, Union
 
 import base58
 from cachetools import TTLCache
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Body
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.middleware.security import limiter
@@ -25,6 +26,11 @@ from app.services.token_analyzer import token_analyzer
 logger = logging.getLogger("rugpull_detection_api.rugcheck")
 
 router = APIRouter()
+
+
+class RugcheckRequest(BaseModel):
+    """Request model for APIX tool calls"""
+    mint_address: str = Field(..., description="Solana token mint address to analyze")
 
 _cache: TTLCache = TTLCache(maxsize=settings.cache_max_size, ttl=settings.cache_ttl_seconds)
 
@@ -275,3 +281,26 @@ async def get_rugcheck_path(
     ),
 ) -> Union[RugcheckResponse, PlainTextResponse]:
     return await _generate_rugcheck(contract, format)
+
+
+@router.post(
+    "/rugcheck-analysis",
+    response_model=RugcheckResponse,
+    responses={
+        200: {"description": "Rugcheck analysis complete"},
+        400: {"description": "Invalid contract address"},
+        404: {"description": "Token not found"},
+        422: {"description": "Invalid parameters"},
+        429: {"description": "Rate limit exceeded"},
+        500: {"description": "Internal server error"},
+    },
+    summary="Analyze token for rugpull risk (APIX compatible)",
+    description="POST endpoint for APIX x402 marketplace tool calls",
+)
+@limiter.limit("60/minute")
+async def post_rugcheck_analysis(
+    request: Request,
+    body: RugcheckRequest,
+) -> RugcheckResponse:
+    """APIX-compatible POST endpoint for rugcheck analysis"""
+    return await _generate_rugcheck(body.mint_address, "json")
